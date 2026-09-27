@@ -1,10 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { generateEmbedding } from "@/lib/ai/embeddings";
 import { chunkText } from "@/lib/documents/chunk-text";
 import {
   ExtractTextError,
   extractTextFromBytes,
 } from "@/lib/documents/extract-text";
-
 type DocumentProcessRow = {
   id: string;
   workspace_id: string;
@@ -23,9 +23,32 @@ function userSafeError(err: unknown): string {
   if (err instanceof ExtractTextError) {
     return err.userMessage;
   }
+  if (err instanceof Error) {
+    if (err.message.includes("GEMINI_API_KEY")) {
+      return "Embedding service is not configured.";
+    }
+    if (/embedding/i.test(err.message)) {
+      return "Could not generate embeddings for this document.";
+    }
+  }
   return "Document processing failed. Please try again or use a different file.";
 }
 
+async function deleteDocumentChunks(
+  supabase: SupabaseClient,
+  documentId: string,
+  workspaceId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("document_chunks")
+    .delete()
+    .eq("document_id", documentId)
+    .eq("workspace_id", workspaceId);
+
+  if (error) {
+    console.error("deleteDocumentChunks:", error.message);
+  }
+}
 async function markDocumentFailed(
   supabase: SupabaseClient,
   documentId: string,
@@ -46,7 +69,7 @@ async function markDocumentFailed(
   }
 }
 
-async function markDocumentExtracted(
+async function markDocumentReady(
   supabase: SupabaseClient,
   documentId: string,
   workspaceId: string,
@@ -54,18 +77,17 @@ async function markDocumentExtracted(
   const { error } = await supabase
     .from("documents")
     .update({
-      status: "processing",
+      status: "ready",
       error_message: null,
     })
     .eq("id", documentId)
     .eq("workspace_id", workspaceId);
 
   if (error) {
-    console.error("markDocumentExtracted:", error.message);
+    console.error("markDocumentReady:", error.message);
     throw error;
   }
 }
-
 export async function processDocument(
   supabase: SupabaseClient,
   params: { documentId: string; workspaceId: string },
@@ -129,17 +151,35 @@ export async function processDocument(
       mime_type: row.mime_type,
     };
 
-    for (let i = 0; i < chunks.length; i += CHUNK_INSERT_BATCH) {
-      const batch = chunks.slice(i, i + CHUNK_INSERT_BATCH).map((content, j) => ({
+    type ChunkRow = {
+      workspace_id: string;
+      document_id: string;
+      content: string; 
+      chunk_index: number;
+      metadata: Record<string, unknown>;
+      embedding: number[];
+    };
+
+    const chunkRows: ChunkRow[] = [];
+
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      const content = chunks[chunkIndex];
+      const embedding = await generateEmbedding(content);
+      chunkRows.push({
         workspace_id: workspaceId,
         document_id: documentId,
         content,
-        chunk_index: i + j,
+        chunk_index: chunkIndex,
         metadata: {
           ...baseMetadata,
           char_length: content.length,
         },
-      }));
+        embedding,
+      });
+    }
+
+    for (let i = 0; i < chunkRows.length; i += CHUNK_INSERT_BATCH) {
+      const batch = chunkRows.slice(i, i + CHUNK_INSERT_BATCH);
 
       const { error: insertError } = await supabase
         .from("document_chunks")
@@ -147,19 +187,16 @@ export async function processDocument(
 
       if (insertError) {
         console.error("processDocument insert chunks:", insertError.message);
-        await supabase
-          .from("document_chunks")
-          .delete()
-          .eq("document_id", documentId)
-          .eq("workspace_id", workspaceId);
+        await deleteDocumentChunks(supabase, documentId, workspaceId);
         throw insertError;
       }
     }
 
-    await markDocumentExtracted(supabase, documentId, workspaceId);
+    await markDocumentReady(supabase, documentId, workspaceId);
     return { ok: true, chunkCount: chunks.length };
   } catch (err) {
     console.error("processDocument:", err);
+    await deleteDocumentChunks(supabase, documentId, workspaceId);
     const message = userSafeError(err);
     await markDocumentFailed(supabase, documentId, workspaceId, message);
     return { ok: false, message };
