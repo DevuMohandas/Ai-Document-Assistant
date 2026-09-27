@@ -1,13 +1,34 @@
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { NewWorkspaceButton } from "@/components/new-workspace-button";
 import { PlaceholderPanel } from "@/components/placeholder-panel";
+import { WorkspacesList } from "@/components/workspaces-list";
+import { createClient } from "@/lib/supabase/server";
+import { getUserWorkspaces } from "@/lib/supabase/workspaces";
+import {
+  ACTIVE_WORKSPACE_COOKIE,
+  resolveActiveWorkspaceId,
+} from "@/lib/workspaces/active-workspace";
 
-const dummyWorkspaces = [
-  { name: "Acme Corp", slug: "acme", documents: 3, active: true },
-  { name: "Personal", slug: "personal", documents: 1, active: false },
-  { name: "Demo workspace", slug: "demo", documents: 0, active: false },
-];
+export default async function WorkspacesPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
 
-export default function WorkspacesPage() {
+  if (userError || !user) {
+    redirect("/login");
+  }
+
+  const { workspaces, error } = await getUserWorkspaces(supabase, user.id);
+  const cookieStore = await cookies();
+  const activeWorkspaceId = resolveActiveWorkspaceId(
+    workspaces,
+    cookieStore.get(ACTIVE_WORKSPACE_COOKIE)?.value,
+  );
+
   return (
     <AppShell
       title="Workspaces"
@@ -18,45 +39,22 @@ export default function WorkspacesPage() {
           <p className="text-sm text-zinc-600">
             Each workspace keeps its own documents and chat history.
           </p>
-          <button
-            type="button"
-            disabled
-            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-400"
-          >
-            New workspace
-          </button>
+          <NewWorkspaceButton
+            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+          />
         </div>
 
+        {error ? (
+          <p className="text-sm text-red-600" role="alert">
+            Could not load workspaces: {error}
+          </p>
+        ) : null}
+
         <PlaceholderPanel heading="Your workspaces">
-          <ul className="mt-2 divide-y divide-zinc-100">
-            {dummyWorkspaces.map((ws) => (
-              <li
-                key={ws.slug}
-                className="flex flex-wrap items-center justify-between gap-3 py-4 first:pt-0"
-              >
-                <div>
-                  <p className="font-medium text-zinc-900">
-                    {ws.name}
-                    {ws.active ? (
-                      <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-                        Active
-                      </span>
-                    ) : null}
-                  </p>
-                  <p className="text-xs text-zinc-500">
-                    {ws.documents} document{ws.documents === 1 ? "" : "s"}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled
-                  className="text-sm text-zinc-400"
-                >
-                  Switch
-                </button>
-              </li>
-            ))}
-          </ul>
+          <WorkspacesList
+            workspaces={workspaces}
+            activeWorkspaceId={activeWorkspaceId}
+          />
         </PlaceholderPanel>
       </div>
     </AppShell>
