@@ -32,9 +32,8 @@ export default function DashboardPage() {
           <textarea
             id="chat-input"
             rows={2}
-            readOnly
             placeholder="Type a question about your documents…"
-            className="w-full resize-none rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm text-zinc-500 outline-none"
+            className="w-full resize-none rounded-lg border border-zinc-100 bg-white px-3 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400"
           />
           <div className="mt-2 flex justify-end">
             <button
