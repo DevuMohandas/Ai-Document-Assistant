@@ -44,6 +44,7 @@ export default async function DashboardPage() {
         </p>
       ) : null}
       <WorkspaceChat
+        workspaceId={active.context.workspaceId}
         workspaceName={active.context.workspaceName}
         initialPersistedMessages={messages}
       />

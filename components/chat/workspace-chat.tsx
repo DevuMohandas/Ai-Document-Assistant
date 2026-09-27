@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { askQuestion } from "@/lib/rag/actions";
 import type { RagCitation } from "@/lib/rag/types";
 import type { ChatMessage } from "@/lib/supabase/chat-messages";
@@ -17,6 +18,7 @@ type LocalChatTurn = {
 };
 
 type WorkspaceChatProps = {
+  workspaceId: string;
   workspaceName: string;
   initialPersistedMessages?: ChatMessage[];
 };
@@ -36,18 +38,49 @@ function roleLabel(role: string): string {
   }
 }
 
-function newLocalId(): string {
-  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+function CitationsList({ citations }: { citations: RagCitation[] }) {
+  if (citations.length === 0) return null;
+  return (
+    <ul className="mt-2 space-y-1 border-t border-zinc-100 pt-2">
+      {citations.map((citation) => (
+        <li
+          key={`${citation.documentId}-${citation.chunkIndex}`}
+          className="text-xs text-zinc-500"
+        >
+          Source: {citation.fileName} · Chunk {citation.chunkIndex}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function WorkspaceChat({
+  workspaceId,
   workspaceName,
   initialPersistedMessages = [],
 }: WorkspaceChatProps) {
+  const router = useRouter();
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [localTurns, setLocalTurns] = useState<LocalChatTurn[]>([]);
+  const [pendingTurns, setPendingTurns] = useState<LocalChatTurn[]>([]);
+
+  const persistedIds = useMemo(
+    () => new Set(initialPersistedMessages.map((m) => m.id)),
+    [initialPersistedMessages],
+  );
+
+  useEffect(() => {
+    setPendingTurns((prev) =>
+      prev.filter((turn) => !persistedIds.has(turn.id)),
+    );
+  }, [persistedIds]);
+
+  useEffect(() => {
+    setPendingTurns([]);
+    setError(null);
+    setInput("");
+  }, [workspaceId]);
 
   const canSend = input.trim().length > 0 && !isSending;
 
@@ -59,33 +92,48 @@ export function WorkspaceChat({
     setError(null);
     setInput("");
 
-    const userTurn: LocalChatTurn = {
-      id: newLocalId(),
-      role: "user",
-      content: question,
-    };
-    setLocalTurns((prev) => [...prev, userTurn]);
+    const optimisticUserId = `optimistic-user-${Date.now()}`;
+    setPendingTurns([
+      { id: optimisticUserId, role: "user", content: question },
+    ]);
 
     try {
       const result = await askQuestion(question);
       if (!result.ok) {
-        setError(GENERIC_ERROR);
+        setError(result.message || GENERIC_ERROR);
+        setPendingTurns([]);
+        router.refresh();
         return;
       }
 
-      const assistantTurn: LocalChatTurn = {
-        id: newLocalId(),
-        role: "assistant",
-        content: result.answer,
-        citations: result.citations,
-      };
-      setLocalTurns((prev) => [...prev, assistantTurn]);
+      setPendingTurns((prev) => {
+        const withoutOptimistic = prev.filter((t) => t.id !== optimisticUserId);
+        return [
+          ...withoutOptimistic,
+          {
+            id: result.userMessageId,
+            role: "user",
+            content: question,
+          },
+          {
+            id:
+              result.assistantMessageId ??
+              `assistant-pending-${result.userMessageId}`,
+            role: "assistant",
+            content: result.answer,
+            citations: result.citations,
+          },
+        ];
+      });
+      router.refresh();
     } catch {
       setError(GENERIC_ERROR);
+      setPendingTurns([]);
+      router.refresh();
     } finally {
       setIsSending(false);
     }
-  }, [input, isSending]);
+  }, [input, isSending, router]);
 
   const persistedItems = useMemo(
     () =>
@@ -95,8 +143,12 @@ export function WorkspaceChat({
     [initialPersistedMessages],
   );
 
+  const visiblePending = pendingTurns.filter(
+    (turn) => !persistedIds.has(turn.id),
+  );
+
   const hasConversation =
-    persistedItems.length > 0 || localTurns.length > 0 || isSending;
+    persistedItems.length > 0 || visiblePending.length > 0 || isSending;
 
   return (
     <div className="mx-auto flex h-[calc(100vh-12rem)] max-w-4xl flex-col gap-4">
@@ -128,10 +180,13 @@ export function WorkspaceChat({
               <p className="mt-1 whitespace-pre-wrap text-zinc-700">
                 {message.content}
               </p>
+              {message.role === "assistant" ? (
+                <CitationsList citations={message.citations} />
+              ) : null}
             </div>
           ))}
 
-          {localTurns.map((turn) => (
+          {visiblePending.map((turn) => (
             <div key={turn.id} className="text-sm">
               <p className="font-medium text-zinc-900">
                 {turn.role === "user" ? "You" : "Assistant"}
@@ -139,19 +194,8 @@ export function WorkspaceChat({
               <p className="mt-1 whitespace-pre-wrap text-zinc-700">
                 {turn.content}
               </p>
-              {turn.role === "assistant" &&
-              turn.citations &&
-              turn.citations.length > 0 ? (
-                <ul className="mt-2 space-y-1 border-t border-zinc-100 pt-2">
-                  {turn.citations.map((citation) => (
-                    <li
-                      key={`${citation.documentId}-${citation.chunkIndex}`}
-                      className="text-xs text-zinc-500"
-                    >
-                      Source: {citation.fileName} · Chunk {citation.chunkIndex}
-                    </li>
-                  ))}
-                </ul>
+              {turn.role === "assistant" && turn.citations ? (
+                <CitationsList citations={turn.citations} />
               ) : null}
             </div>
           ))}

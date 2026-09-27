@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { insertChatMessage } from "@/lib/supabase/chat-messages";
 import { generateRagAnswer } from "@/lib/rag/generate-answer";
 import { retrieveRelevantChunks } from "@/lib/rag/retrieve-chunks";
 import type {
@@ -85,9 +86,25 @@ export async function askQuestion(question: string): Promise<AskQuestionResult> 
     };
   }
 
+  const workspaceId = active.context.workspaceId;
+
+  const userInsert = await insertChatMessage(supabase, {
+    workspaceId,
+    userId: user.id,
+    role: "user",
+    content: trimmed,
+  });
+
+  if (!userInsert.ok) {
+    return {
+      ok: false,
+      message: "Could not save your message. Please try again.",
+    };
+  }
+
   const result = await generateRagAnswer({
     supabase,
-    workspaceId: active.context.workspaceId,
+    workspaceId,
     question: trimmed,
   });
 
@@ -95,9 +112,26 @@ export async function askQuestion(question: string): Promise<AskQuestionResult> 
     return { ok: false, message: result.message };
   }
 
+  const assistantInsert = await insertChatMessage(supabase, {
+    workspaceId,
+    userId: user.id,
+    role: "assistant",
+    content: result.answer,
+    citations: result.citations,
+  });
+
+  if (!assistantInsert.ok) {
+    console.error(
+      "askQuestion: assistant message not persisted:",
+      assistantInsert.message,
+    );
+  }
+
   return {
     ok: true,
     answer: result.answer,
     citations: result.citations,
+    userMessageId: userInsert.id,
+    assistantMessageId: assistantInsert.ok ? assistantInsert.id : null,
   };
 }

@@ -40,5 +40,7 @@ export type AskQuestionResult =
       ok: true;
       answer: string;
       citations: RagCitation[];
+      userMessageId: string;
+      assistantMessageId: string | null;
     }
   | { ok: false; message: string };
