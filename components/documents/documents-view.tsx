@@ -1,47 +1,12 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { uploadDocument } from "@/app/(app)/documents/actions";
 import type {
   DocumentStatus,
   WorkspaceDocument,
 } from "@/lib/types/documents";
-
-const SEED_DOCUMENTS: WorkspaceDocument[] = [
-  {
-    id: "doc-1",
-    fileName: "employee-handbook.pdf",
-    fileType: "PDF",
-    uploadedAt: "20 Sep 2026",
-    status: "Ready",
-  },
-  {
-    id: "doc-2",
-    fileName: "Leave Policy.docx",
-    fileType: "DOCX",
-    uploadedAt: "22 Sep 2026",
-    status: "Ready",
-  },
-  {
-    id: "doc-3",
-    fileName: "contract-draft.pdf",
-    fileType: "PDF",
-    uploadedAt: "25 Sep 2026",
-    status: "Processing",
-  },
-];
-
-function fileTypeFromName(name: string): string {
-  const ext = name.split(".").pop()?.toUpperCase() ?? "FILE";
-  return ext.length <= 5 ? ext : "FILE";
-}
-
-function formatUploadDate(date: Date): string {
-  return date.toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
 
 function statusStyles(status: DocumentStatus): string {
   switch (status) {
@@ -58,45 +23,83 @@ function statusStyles(status: DocumentStatus): string {
 
 type DocumentsViewProps = {
   activeWorkspaceName: string;
-  initialDocuments?: WorkspaceDocument[];
-  onUploadFiles?: (files: File[]) => void | Promise<void>;
+  initialDocuments: WorkspaceDocument[];
+  uploadEnabled?: boolean;
   onDeleteDocument?: (id: string) => void | Promise<void>;
   onViewDocument?: (id: string) => void;
 };
 
 export function DocumentsView({
   activeWorkspaceName,
-  initialDocuments = SEED_DOCUMENTS,
-  onUploadFiles,
+  initialDocuments,
+  uploadEnabled = true,
   onDeleteDocument,
   onViewDocument,
 }: DocumentsViewProps) {
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [documents, setDocuments] = useState(initialDocuments);
   const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [feedback, setFeedback] = useState<{
+    tone: "success" | "error" | "duplicate";
+    message: string;
+  } | null>(null);
+
+  useEffect(() => {
+    setDocuments(initialDocuments);
+  }, [initialDocuments]);
+
+  const uploadFile = useCallback(
+    async (file: File) => {
+      if (!uploadEnabled || isUploading) return;
+
+      setIsUploading(true);
+      setFeedback(null);
+
+      const formData = new FormData();
+      formData.set("file", file);
+
+      try {
+        const result = await uploadDocument(formData);
+        if (result.ok) {
+          setFeedback({
+            tone: "success",
+            message: "Document uploaded and text extracted successfully.",
+          });
+          router.refresh();
+        } else if (result.kind === "duplicate") {
+          setFeedback({ tone: "duplicate", message: result.message });
+        } else {
+          setFeedback({ tone: "error", message: result.message });
+          if (result.kind === "processing") {
+            router.refresh();
+          }
+        }
+      } catch {
+        setFeedback({
+          tone: "error",
+          message: "Upload failed. Please try again.",
+        });
+      } finally {
+        setIsUploading(false);
+      }
+    },
+    [isUploading, router, uploadEnabled],
+  );
 
   const addFiles = useCallback(
     (fileList: FileList | null) => {
-      if (!fileList?.length) return;
-
-      const files = Array.from(fileList);
-      const newRows: WorkspaceDocument[] = files.map((file) => ({
-        id: `local-${file.name}-${file.lastModified}`,
-        fileName: file.name,
-        fileType: fileTypeFromName(file.name),
-        uploadedAt: formatUploadDate(new Date()),
-        status: "Uploading",
-      }));
-
-      setDocuments((prev) => [...newRows, ...prev]);
-      void onUploadFiles?.(files);
+      if (!uploadEnabled || !fileList?.length || isUploading) return;
+      void uploadFile(fileList[0]);
     },
-    [onUploadFiles],
+    [isUploading, uploadEnabled, uploadFile],
   );
 
   const handleDelete = (id: string) => {
+    if (!onDeleteDocument) return;
     setDocuments((prev) => prev.filter((d) => d.id !== id));
-    void onDeleteDocument?.(id);
+    void onDeleteDocument(id);
   };
 
   return (
@@ -110,8 +113,9 @@ export function DocumentsView({
         <input
           ref={inputRef}
           type="file"
-          multiple
+          accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           className="sr-only"
+          disabled={!uploadEnabled || isUploading}
           onChange={(e) => {
             addFiles(e.target.files);
             e.target.value = "";
@@ -119,39 +123,66 @@ export function DocumentsView({
         />
         <button
           type="button"
+          disabled={!uploadEnabled || isUploading}
           onClick={() => inputRef.current?.click()}
-          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Upload Document
+          {isUploading ? "Uploading and processing…" : "Upload Document"}
         </button>
       </div>
 
+      {feedback ? (
+        <p
+          className={`text-sm ${
+            feedback.tone === "success"
+              ? "text-emerald-700"
+              : feedback.tone === "duplicate"
+                ? "text-amber-800"
+                : "text-red-600"
+          }`}
+          role="alert"
+        >
+          {feedback.message}
+        </p>
+      ) : null}
+
       <div
-        role="button"
-        tabIndex={0}
+        role={uploadEnabled ? "button" : undefined}
+        tabIndex={uploadEnabled ? 0 : undefined}
         onKeyDown={(e) => {
+          if (!uploadEnabled) return;
           if (e.key === "Enter" || e.key === " ") inputRef.current?.click();
         }}
         onDragEnter={(e) => {
+          if (!uploadEnabled || isUploading) return;
           e.preventDefault();
           setIsDragging(true);
         }}
         onDragOver={(e) => {
+          if (!uploadEnabled || isUploading) return;
           e.preventDefault();
           setIsDragging(true);
         }}
         onDragLeave={(e) => {
+          if (!uploadEnabled) return;
           e.preventDefault();
           if (e.currentTarget.contains(e.relatedTarget as Node)) return;
           setIsDragging(false);
         }}
         onDrop={(e) => {
+          if (!uploadEnabled || isUploading) return;
           e.preventDefault();
           setIsDragging(false);
           addFiles(e.dataTransfer.files);
         }}
-        onClick={() => inputRef.current?.click()}
-        className={`cursor-pointer rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors ${
+        onClick={() => {
+          if (uploadEnabled && !isUploading) inputRef.current?.click();
+        }}
+        className={`rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors ${
+          uploadEnabled && !isUploading ? "cursor-pointer" : "cursor-default"
+        } ${
+          isUploading ? "pointer-events-none opacity-60" : ""
+        } ${
           isDragging
             ? "border-zinc-900 bg-zinc-100"
             : "border-zinc-200 bg-white hover:border-zinc-300"
@@ -214,8 +245,9 @@ export function DocumentsView({
                       </button>
                       <button
                         type="button"
+                        disabled={!onDeleteDocument}
                         onClick={() => handleDelete(doc.id)}
-                        className="text-sm font-medium text-red-600 hover:text-red-800"
+                        className="text-sm font-medium text-red-600 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Delete
                       </button>

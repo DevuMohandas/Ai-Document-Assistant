@@ -1,26 +1,38 @@
+import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { ToolActivityTable } from "@/components/tool-activity/tool-activity-table";
-import { PLACEHOLDER_ACTIVE_WORKSPACE } from "@/lib/placeholders";
-import type { ToolActivityRow } from "@/lib/types/tool-activity";
+import { WorkspaceScopeNotice } from "@/components/workspace-scope-notice";
+import { createClient } from "@/lib/supabase/server";
+import { getWorkspaceToolCalls } from "@/lib/supabase/tool-calls";
+import { getActiveWorkspace } from "@/lib/workspaces/server";
 
-const SEED_TOOL_ACTIVITY: ToolActivityRow[] = [
-  {
-    id: "tool-1",
-    toolName: "save_task",
-    description: "Created task: Review contract",
-    occurredAt: "25 Sep 2026, 3:30 PM",
-    status: "Success",
-  },
-  {
-    id: "tool-2",
-    toolName: "send_notification",
-    description: "Sent document summary",
-    occurredAt: "24 Sep 2026, 11:15 AM",
-    status: "Success",
-  },
-];
+export default async function ToolActivityPage() {
+  const active = await getActiveWorkspace();
 
-export default function ToolActivityPage() {
+  if (!active.ok) {
+    if (active.kind === "unauthenticated") redirect("/login");
+    return (
+      <AppShell
+        title="Tool Activity"
+        description="Actions performed by the assistant in this workspace."
+      >
+        <WorkspaceScopeNotice
+          message={
+            active.kind === "no_workspaces"
+              ? "Create a workspace to view tool activity."
+              : "Could not load your workspace."
+          }
+        />
+      </AppShell>
+    );
+  }
+
+  const supabase = await createClient();
+  const { rows, error } = await getWorkspaceToolCalls(
+    supabase,
+    active.context.workspaceId,
+  );
+
   return (
     <AppShell
       title="Tool Activity"
@@ -30,10 +42,15 @@ export default function ToolActivityPage() {
         <p className="text-sm text-zinc-600">
           Workspace:{" "}
           <span className="font-medium text-zinc-900">
-            {PLACEHOLDER_ACTIVE_WORKSPACE}
+            {active.context.workspaceName}
           </span>
         </p>
-        <ToolActivityTable rows={SEED_TOOL_ACTIVITY} />
+        {error ? (
+          <p className="text-sm text-red-600" role="alert">
+            Could not load tool activity. Please try again.
+          </p>
+        ) : null}
+        <ToolActivityTable rows={rows} />
       </div>
     </AppShell>
   );
