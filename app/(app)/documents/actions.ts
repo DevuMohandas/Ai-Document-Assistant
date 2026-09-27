@@ -191,3 +191,101 @@ export async function uploadDocument(
   revalidatePath("/documents");
   return { ok: true };
 }
+
+export type DeleteDocumentResult =
+  | { ok: true }
+  | {
+      ok: false;
+      kind:
+        | "unauthenticated"
+        | "no_workspace"
+        | "not_found"
+        | "storage"
+        | "database";
+      message: string;
+    };
+
+export async function deleteDocument(
+  documentId: string,
+): Promise<DeleteDocumentResult> {
+  const trimmedId = documentId.trim();
+  if (!trimmedId) {
+    return { ok: false, kind: "not_found", message: "Document not found." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    return {
+      ok: false,
+      kind: "unauthenticated",
+      message: "You must be signed in to delete documents.",
+    };
+  }
+
+  const active = await getActiveWorkspace();
+  if (!active.ok) {
+    return {
+      ok: false,
+      kind: "no_workspace",
+      message: "Could not resolve your active workspace.",
+    };
+  }
+
+  const workspaceId = active.context.workspaceId;
+
+  const { data: doc, error: loadError } = await supabase
+    .from("documents")
+    .select("id, storage_path")
+    .eq("id", trimmedId)
+    .eq("workspace_id", workspaceId)
+    .maybeSingle();
+
+  if (loadError) {
+    console.error("deleteDocument load:", loadError.message);
+    return {
+      ok: false,
+      kind: "database",
+      message: "Could not delete this document. Please try again.",
+    };
+  }
+
+  if (!doc) {
+    return { ok: false, kind: "not_found", message: "Document not found." };
+  }
+
+  const { error: storageError } = await supabase.storage
+    .from("documents")
+    .remove([doc.storage_path]);
+
+  if (storageError) {
+    console.error("deleteDocument storage:", storageError.message);
+    return {
+      ok: false,
+      kind: "storage",
+      message: "Could not remove the file from storage. The document was not deleted.",
+    };
+  }
+
+  const { error: deleteError } = await supabase
+    .from("documents")
+    .delete()
+    .eq("id", trimmedId)
+    .eq("workspace_id", workspaceId);
+
+  if (deleteError) {
+    console.error("deleteDocument database:", deleteError.message);
+    return {
+      ok: false,
+      kind: "database",
+      message: "Could not delete document metadata. Please try again.",
+    };
+  }
+
+  revalidatePath("/documents");
+  return { ok: true };
+}

@@ -2,7 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { uploadDocument } from "@/app/(app)/documents/actions";
+import { deleteDocument, uploadDocument } from "@/app/(app)/documents/actions";
+import { ConfirmModal } from "@/components/confirm-modal";
 import type {
   DocumentStatus,
   WorkspaceDocument,
@@ -41,6 +42,10 @@ export function DocumentsView({
   const [documents, setDocuments] = useState(initialDocuments);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<WorkspaceDocument | null>(
+    null,
+  );
   const [feedback, setFeedback] = useState<{
     tone: "success" | "error" | "duplicate";
     message: string;
@@ -96,14 +101,63 @@ export function DocumentsView({
     [isUploading, uploadEnabled, uploadFile],
   );
 
-  const handleDelete = (id: string) => {
-    if (!onDeleteDocument) return;
-    setDocuments((prev) => prev.filter((d) => d.id !== id));
-    void onDeleteDocument(id);
-  };
+  const requestDelete = useCallback(
+    (doc: WorkspaceDocument) => {
+      if (onDeleteDocument) {
+        setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+        void onDeleteDocument(doc.id);
+        return;
+      }
+      setPendingDelete(doc);
+    },
+    [onDeleteDocument],
+  );
+
+  const confirmDelete = useCallback(async () => {
+    if (!pendingDelete) return;
+
+    const doc = pendingDelete;
+    setDeletingId(doc.id);
+    setFeedback(null);
+
+    try {
+      const result = await deleteDocument(doc.id);
+      if (result.ok) {
+        setPendingDelete(null);
+        setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+        router.refresh();
+      } else {
+        setFeedback({ tone: "error", message: result.message });
+      }
+    } catch {
+      setFeedback({
+        tone: "error",
+        message: "Delete failed. Please try again.",
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  }, [pendingDelete, router]);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <>
+      <ConfirmModal
+        open={pendingDelete !== null}
+        title="Delete document?"
+        description={
+          pendingDelete
+            ? `"${pendingDelete.fileName}" will be permanently removed, including the file in storage and all indexed chunks.`
+            : ""
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        variant="danger"
+        loading={deletingId !== null}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={() => void confirmDelete()}
+      />
+
+      <div className="mx-auto max-w-5xl space-y-6">
       <p className="text-sm text-zinc-600">
         Workspace:{" "}
         <span className="font-medium text-zinc-900">{activeWorkspaceName}</span>
@@ -245,11 +299,15 @@ export function DocumentsView({
                       </button>
                       <button
                         type="button"
-                        disabled={!onDeleteDocument}
-                        onClick={() => handleDelete(doc.id)}
+                        disabled={
+                          isUploading ||
+                          deletingId === doc.id ||
+                          Boolean(deletingId)
+                        }
+                        onClick={() => requestDelete(doc)}
                         className="text-sm font-medium text-red-600 hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        Delete
+                        {deletingId === doc.id ? "Deleting…" : "Delete"}
                       </button>
                     </div>
                   </td>
@@ -259,6 +317,7 @@ export function DocumentsView({
           </tbody>
         </table>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
