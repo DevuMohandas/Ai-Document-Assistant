@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LogoutButton } from "@/components/logout-button";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 
 const mainNavItems = [
@@ -49,12 +50,11 @@ export function AppShell({ children, title, description }: AppShellProps) {
           >
             Profile
           </Link>
-          <Link
-            href="/login"
-            className="mt-0.5 block rounded-lg px-3 py-2 text-sm text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+          <LogoutButton
+            className="mt-0.5 block w-full rounded-lg px-3 py-2 text-left text-sm text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-60"
           >
             Logout
-          </Link>
+          </LogoutButton>
         </div>
       </aside>
 
@@ -95,12 +95,11 @@ export function AppShell({ children, title, description }: AppShellProps) {
           >
             Profile
           </Link>
-          <Link
-            href="/login"
-            className="shrink-0 rounded-full border border-zinc-200 px-3 py-1 text-xs text-zinc-600"
+          <LogoutButton
+            className="shrink-0 rounded-full border border-zinc-200 px-3 py-1 text-xs text-zinc-600 disabled:opacity-60"
           >
             Logout
-          </Link>
+          </LogoutButton>
         </nav>
 
         <main className="flex-1 p-4 sm:p-6">{children}</main>
