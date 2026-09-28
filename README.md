@@ -2,6 +2,17 @@
 
 A Next.js app for teams that work in separate **workspaces**. Each workspace has its own documents, chat history, tasks, and tool-activity log. Users sign in with Supabase Auth, pick an active workspace, upload files, and ask questions that are answered with **retrieval-augmented generation (RAG)** over that workspace’s content. The assistant can also call **Gemini tools** to create and list tasks in the active workspace.
 
+## Live Application
+
+**URL:** https://ai-documentassistant.netlify.app
+
+## Test Login
+
+Use the following test account:
+
+**Email:** test1@example.com 
+**Password:** testuser@123
+
 ## What it does
 
 - **Workspaces** — Create and switch workspaces; the active workspace is stored in a cookie and enforced on the server.
