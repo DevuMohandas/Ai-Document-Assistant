@@ -1,4 +1,5 @@
 import mammoth from "mammoth";
+import { CanvasFactory } from "pdf-parse/worker";
 import { PDFParse } from "pdf-parse";
 import {
   ALLOWED_DOCUMENT_MIME_TYPES,
@@ -70,7 +71,10 @@ async function extractDocx(bytes: Buffer): Promise<string> {
 }
 
 async function extractPdf(bytes: Buffer): Promise<string> {
-  const parser = new PDFParse({ data: new Uint8Array(bytes) });
+  const parser = new PDFParse({
+    data: new Uint8Array(bytes),
+    CanvasFactory,
+  });
   try {
     const result = await parser.getText();
     return normalizeExtractedText(result.text ?? "");
